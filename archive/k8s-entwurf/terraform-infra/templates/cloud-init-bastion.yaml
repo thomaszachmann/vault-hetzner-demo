@@ -1,0 +1,92 @@
+#cloud-config
+# Bastion: NAT-Gateway für alle privaten Server und WireGuard-Zugang für den Admin-Laptop.
+# NAT muss beim ersten Boot stehen, damit die k3s-Nodes k3s und Images laden können.
+package_update: true
+packages:
+  - wireguard
+  - jq
+
+write_files:
+  # cloud-init konfiguriert auf Hetzner nur das öffentliche Interface (eth0).
+  # Das private Interface (enp7s0) braucht eine eigene Netplan-Definition.
+  - path: /etc/netplan/60-private.yaml
+    permissions: "0600"
+    content: |
+      network:
+        version: 2
+        ethernets:
+          private:
+            match:
+              name: "enp*"
+            dhcp4: true
+  - path: /etc/sysctl.d/99-nat.conf
+    content: |
+      net.ipv4.ip_forward = 1
+  - path: /etc/systemd/system/nat-masquerade.service
+    content: |
+      [Unit]
+      Description=NAT fuer das private Hetzner-Netz
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/iptables -t nat -A POSTROUTING -s ${network_cidr} -o eth0 -j MASQUERADE
+      ExecStop=/usr/sbin/iptables -t nat -D POSTROUTING -s ${network_cidr} -o eth0 -j MASQUERADE
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /usr/local/sbin/setup-wireguard.sh
+    permissions: "0700"
+    content: |
+      #!/usr/bin/env bash
+      # Erzeugt Server- und Client-Schlüssel und legt die Client-Konfiguration unter
+      # /root/wireguard-client.conf ab (deploy.sh holt sie per SSH ab).
+      set -euo pipefail
+      cd /etc/wireguard
+      umask 077
+      for k in server client; do
+        [ -f $k.key ] || { wg genkey > $k.key; wg pubkey < $k.key > $k.pub; }
+      done
+      for i in $(seq 1 30); do
+        PRIV_IF=$(ip -o -4 addr show | awk '$4 ~ /^10\.0\.0\.2\// {print $2}')
+        [ -n "$PRIV_IF" ] && break
+        sleep 2
+      done
+      PUBLIC_IP=$(curl -s http://169.254.169.254/hetzner/v1/metadata/public-ipv4)
+      cat > wg0.conf <<EOF
+      [Interface]
+      Address = 10.200.0.1/24
+      ListenPort = 51820
+      PrivateKey = $(cat server.key)
+      # WireGuard-Clients erscheinen im privaten Netz als Bastion (keine Rückroute nötig)
+      PostUp = iptables -t nat -A POSTROUTING -s 10.200.0.0/24 -o $PRIV_IF -j MASQUERADE
+      PostDown = iptables -t nat -D POSTROUTING -s 10.200.0.0/24 -o $PRIV_IF -j MASQUERADE
+
+      [Peer]
+      PublicKey = $(cat client.pub)
+      AllowedIPs = 10.200.0.2/32
+      EOF
+      cat > /root/wireguard-client.conf <<EOF
+      # Vault-Demo – WireGuard-Client (in die WireGuard-App importieren)
+      [Interface]
+      Address = 10.200.0.2/32
+      PrivateKey = $(cat client.key)
+      # Öffentlicher Resolver ohne DNS-Rebind-Filter, damit nip.io auf private IPs auflösen darf
+      DNS = 1.1.1.1, 1.0.0.1
+
+      [Peer]
+      PublicKey = $(cat server.pub)
+      Endpoint = $PUBLIC_IP:51820
+      AllowedIPs = ${network_cidr}
+      PersistentKeepalive = 25
+      EOF
+      systemctl enable --now wg-quick@wg0
+
+runcmd:
+  - netplan apply
+  - sysctl --system
+  - systemctl daemon-reload
+  - systemctl enable --now nat-masquerade.service
+  - /usr/local/sbin/setup-wireguard.sh

@@ -1,0 +1,93 @@
+# Vault-Cluster je Standort: 3 Pods, Integrated Storage (Raft), Auto-Unseal über den
+# Unseal-Vault desselben Standorts. Platzhalter ${...} ersetzt scripts/platform.sh.
+global:
+  tlsDisable: false
+
+injector:
+  enabled: false
+
+server:
+  image:
+    repository: "${VAULT_IMAGE}"
+    tag: "${VAULT_IMAGE_TAG}"
+
+  extraEnvironmentVars:
+    VAULT_CACERT: /vault/userconfig/tls/ca.crt
+
+  # Token für den Transit-Seal (Policy: nur encrypt/decrypt auf dem Unseal-Schlüssel)
+  extraSecretEnvironmentVars:
+    - envName: VAULT_TOKEN
+      secretName: vault-transit-token
+      secretKey: token
+
+  volumes:
+    - name: tls
+      secret:
+        secretName: vault-tls
+  volumeMounts:
+    - name: tls
+      mountPath: /vault/userconfig/tls
+      readOnly: true
+
+  dataStorage:
+    enabled: true
+    size: 2Gi
+    storageClass: local-path
+
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 512Mi }
+
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui            = true
+        disable_mlock = true
+        cluster_name  = "vault-${SITE}"
+
+        listener "tcp" {
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+          tls_cert_file   = "/vault/userconfig/tls/tls.crt"
+          tls_key_file    = "/vault/userconfig/tls/tls.key"
+
+          telemetry {
+            unauthenticated_metrics_access = true
+          }
+        }
+
+        storage "raft" {
+          path = "/vault/data"
+
+          retry_join {
+            leader_api_addr     = "https://vault-0.vault-internal:8200"
+            leader_ca_cert_file = "/vault/userconfig/tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr     = "https://vault-1.vault-internal:8200"
+            leader_ca_cert_file = "/vault/userconfig/tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr     = "https://vault-2.vault-internal:8200"
+            leader_ca_cert_file = "/vault/userconfig/tls/ca.crt"
+          }
+        }
+
+        # Auto-Unseal: Schlüssel liegt im Unseal-Vault (HSM-Stellvertreter) desselben Standorts
+        seal "transit" {
+          address     = "https://vault-unseal.vault-unseal.svc:8200"
+          key_name    = "autounseal"
+          mount_path  = "transit/"
+          tls_ca_cert = "/vault/userconfig/tls/ca.crt"
+        }
+
+        service_registration "kubernetes" {}
+
+        telemetry {
+          prometheus_retention_time = "30s"
+          disable_hostname          = true
+        }

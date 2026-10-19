@@ -1,0 +1,88 @@
+# "Externe Dienste" – stellvertretend für Infrastruktur der Behörde:
+# Keycloak (zentrales IdM), PostgreSQL (Fachdatenbank), Prometheus/Grafana/Loki (Monitoring).
+# Alles als Docker Compose, TLS terminiert Caddy mit Zertifikaten der Demo-Root-CA.
+
+- name: Docker installieren
+  ansible.builtin.apt:
+    name: [docker.io, docker-compose-v2]
+
+- name: Docker starten
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+# Verzeichnisse, die als Verzeichnis in Container gemountet werden, müssen für den
+# Container-Benutzer lesbar sein (postgres = UID 999, grafana = UID 472).
+- name: Verzeichnisse
+  ansible.builtin.file:
+    path: "/opt/services/{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: "", mode: "0750" }
+    - { path: certs, mode: "0750" }
+    - { path: postgres-init, owner: "999", mode: "0700" }
+    - { path: keycloak }
+    - { path: prometheus }
+    - { path: grafana }
+    - { path: grafana/provisioning }
+    - { path: grafana/provisioning/datasources }
+    - { path: grafana/provisioning/dashboards }
+    - { path: grafana/dashboards }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Zertifikate
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/opt/services/certs/{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "{{ secrets_dir }}/pki/services.crt", dest: services.pem, mode: "0644" }
+    - { src: "{{ secrets_dir }}/pki/services.key", dest: services.key, mode: "0600" }
+    - { src: "{{ secrets_dir }}/ca/root-ca.pem", dest: ca.pem, mode: "0644" }
+  loop_control:
+    label: "{{ item.dest }}"
+  notify: Restart services
+
+- name: Konfigurationsdateien
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/opt/services/{{ item.dest }}"
+    owner: "{{ item.owner | default('root') }}"
+    mode: "{{ item.mode | default('0644') }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  loop:
+    - { src: compose.yml.j2, dest: compose.yml }
+    - { src: env.j2, dest: .env, mode: "0600" }
+    - { src: Caddyfile.j2, dest: Caddyfile }
+    - { src: init.sql.j2, dest: postgres-init/10-init.sql, owner: "999", mode: "0600" }
+    - { src: realm.json.j2, dest: keycloak/behoerde-realm.json, owner: "1000", mode: "0600" }
+    - { src: prometheus.yml.j2, dest: prometheus/prometheus.yml }
+    - { src: datasources.yml.j2, dest: grafana/provisioning/datasources/datasources.yml }
+    - { src: dashboards.yml.j2, dest: grafana/provisioning/dashboards/dashboards.yml }
+    - { src: vault-dashboard.json.j2, dest: grafana/dashboards/vault.json }
+  notify: Restart services
+
+- name: Stack starten
+  ansible.builtin.command: docker compose up -d --wait --wait-timeout 300
+  args:
+    chdir: /opt/services
+  register: compose_up
+  changed_when: "'Started' in compose_up.stderr or 'Created' in compose_up.stderr"
+
+# Hinweis: Von Docker veröffentlichte Ports umgehen ufw. Der Server hat kein öffentliches
+# Interface; die Ports sind zusätzlich nur an die private IP gebunden.
+- name: Host-Firewall – HTTPS, PostgreSQL, Loki und Prometheus im privaten Netz
+  ansible.builtin.shell: |
+    set -e
+    ufw allow from {{ network_cidr }} to any port 443 proto tcp
+    {% for subnet in site_subnets.values() %}
+    ufw allow from {{ subnet }} to any port 5432 proto tcp
+    ufw allow from {{ subnet }} to any port 3100 proto tcp
+    ufw allow from {{ subnet }} to any port 9090 proto tcp
+    {% endfor %}
+  changed_when: true

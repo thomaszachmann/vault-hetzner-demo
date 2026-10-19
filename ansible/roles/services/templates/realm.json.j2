@@ -1,0 +1,74 @@
+{#- Realm "behoerde": steht für das zentrale behördliche Identity Management.
+    Alle Benutzer müssen beim ersten Login TOTP (MFA) einrichten. -#}
+{%- set redirect_uris = [] -%}
+{%- for site, ip in lb_ips.items() -%}
+{%-   set _ = redirect_uris.append('https://vault-' ~ site ~ '.' ~ ip ~ '.nip.io:8200/ui/vault/auth/oidc/oidc/callback') -%}
+{%- endfor -%}
+{%- set _ = redirect_uris.append('http://localhost:8250/oidc/callback') -%}
+{%- set users = [
+  {'username': 'alice', 'first': 'Alice', 'last': 'Admin',     'groups': ['/vault-admins'], 'pw': passwords.user_alice},
+  {'username': 'bob',   'first': 'Bob',   'last': 'Entwickler','groups': ['/fa-entwickler'], 'pw': passwords.user_bob},
+  {'username': 'carol', 'first': 'Carol', 'last': 'Betrieb',   'groups': ['/fb-betrieb'],   'pw': passwords.user_carol},
+] -%}
+{
+  "realm": "{{ keycloak_realm }}",
+  "displayName": "Behörde (Demo-IdM)",
+  "enabled": true,
+  "sslRequired": "external",
+  "loginWithEmailAllowed": false,
+  "bruteForceProtected": true,
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "groups": [
+    { "name": "vault-admins" },
+    { "name": "fa-entwickler" },
+    { "name": "fb-betrieb" }
+  ],
+  "users": [
+{%- for u in users %}
+    {
+      "username": "{{ u.username }}",
+      "enabled": true,
+      "firstName": "{{ u.first }}",
+      "lastName": "{{ u.last }}",
+      "email": "{{ u.username }}@behoerde.demo",
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "{{ u.pw }}", "temporary": false }],
+      "requiredActions": ["CONFIGURE_TOTP"],
+      "groups": {{ u.groups | to_json }}
+    }{{ "," if not loop.last }}
+{%- endfor %}
+  ],
+  "clients": [
+    {
+      "clientId": "vault",
+      "name": "HashiCorp Vault",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "{{ passwords.keycloak_vault_client }}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": {{ redirect_uris | to_json }},
+      "webOrigins": ["+"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    }
+  ]
+}

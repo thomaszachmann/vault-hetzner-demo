@@ -1,0 +1,154 @@
+# Grafana Alloy je Cluster: scrapt die Vault-Pods (Prometheus-Format) und sammelt die
+# Pod-Logs (inkl. Audit-Log, das Vault nach stdout schreibt). Beides geht an die
+# zentralen Dienste auf der Dienste-VM. Platzhalter ${...} ersetzt envsubst.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, namespaces, nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy
+  namespace: monitoring
+data:
+  config.alloy: |
+    // --- Metriken der Vault-Pods ---
+    discovery.kubernetes "vault" {
+      role = "pod"
+      namespaces { names = ["vault"] }
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/name=vault,component=server"
+      }
+    }
+
+    discovery.relabel "vault" {
+      targets = discovery.kubernetes.vault.targets
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_port_number"]
+        regex         = "8200"
+        action        = "keep"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+    }
+
+    prometheus.scrape "vault" {
+      job_name        = "vault"
+      targets         = discovery.relabel.vault.output
+      scheme          = "https"
+      metrics_path    = "/v1/sys/metrics"
+      params          = { format = ["prometheus"] }
+      scrape_interval = "15s"
+      tls_config {
+        ca_file     = "/etc/alloy/ca/ca.crt"
+        server_name = "vault-internal.vault.svc"
+      }
+      forward_to = [prometheus.remote_write.central.receiver]
+    }
+
+    prometheus.remote_write "central" {
+      endpoint {
+        url = "http://${SERVICES_IP}:9090/api/v1/write"
+      }
+      external_labels = { site = "${SITE}" }
+    }
+
+    // --- Pod-Logs (Vault-Server- und Audit-Log, Fachanwendung) ---
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "logs" {
+      targets = discovery.kubernetes.pods.targets
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        regex         = "vault|vault-unseal|fachanwendung"
+        action        = "keep"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+    }
+
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.logs.output
+      forward_to = [loki.write.central.receiver]
+    }
+
+    loki.write "central" {
+      endpoint {
+        url = "http://${SERVICES_IP}:3100/loki/api/v1/push"
+      }
+      external_labels = { site = "${SITE}" }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: alloy }
+  template:
+    metadata:
+      labels: { app: alloy }
+    spec:
+      serviceAccountName: alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.20.1
+          args: ["run", "/etc/alloy/config.alloy", "--storage.path=/tmp/alloy"]
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/alloy }
+            - { name: ca, mountPath: /etc/alloy/ca }
+      volumes:
+        - name: config
+          configMap: { name: alloy }
+        - name: ca
+          secret: { secretName: root-ca }

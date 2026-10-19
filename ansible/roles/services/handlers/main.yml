@@ -1,0 +1,5 @@
+- name: Restart services
+  ansible.builtin.command: docker compose up -d --force-recreate --wait --wait-timeout 300
+  args:
+    chdir: /opt/services
+  changed_when: true

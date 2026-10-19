@@ -1,0 +1,28 @@
+# Lokales Verzeichnis für generierte Geheimnisse (gitignored)
+secrets_dir: "{{ playbook_dir }}/../.secrets"
+
+# Fest gepinnte Versionen der Dienste
+images:
+  postgres: postgres:17.11
+  keycloak: quay.io/keycloak/keycloak:26.7.5
+  caddy: caddy:2.11.7
+  prometheus: prom/prometheus:v3.15.0
+  grafana: grafana/grafana:13.1.8
+  loki: grafana/loki:3.6.18
+
+keycloak_realm: behoerde
+nip: "{{ services_ip }}.nip.io"
+keycloak_url: "https://keycloak.{{ nip }}"
+
+# Passwörter: werden beim ersten Lauf zufällig erzeugt und unter .secrets/passwords abgelegt
+pw_opts: "length=24 chars=ascii_letters,digits"
+passwords:
+  keycloak_admin: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/keycloak_admin ' + pw_opts) }}"
+  keycloak_db: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/keycloak_db ' + pw_opts) }}"
+  keycloak_vault_client: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/keycloak_vault_client ' + pw_opts) }}"
+  postgres_superuser: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/postgres_superuser ' + pw_opts) }}"
+  postgres_vault: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/postgres_vault ' + pw_opts) }}"
+  grafana_admin: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/grafana_admin ' + pw_opts) }}"
+  user_alice: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/user_alice ' + pw_opts) }}"
+  user_bob: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/user_bob ' + pw_opts) }}"
+  user_carol: "{{ lookup('ansible.builtin.password', secrets_dir + '/passwords/user_carol ' + pw_opts) }}"

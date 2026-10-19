@@ -1,0 +1,60 @@
+#cloud-config
+# k3s-Server-Node (nur privates Netz). Internet über die Bastion (NAT).
+write_files:
+  - path: /usr/local/sbin/setup-node.sh
+    permissions: "0700"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # 1) Default-Route über das Netzwerk-Gateway (→ Bastion) und Hetzner-DNS
+      IFACE=$(ip -o -4 addr show | awk '$4 ~ /^10\.0\./ {print $2; exit}')
+      cat > /etc/netplan/60-default-via-bastion.yaml <<EOF
+      network:
+        version: 2
+        ethernets:
+          $IFACE:
+            dhcp4: true
+            routes:
+              - to: default
+                via: ${gateway_ip}
+                on-link: true
+            nameservers:
+              addresses: [185.12.64.1, 185.12.64.2]
+      EOF
+      chmod 600 /etc/netplan/60-default-via-bastion.yaml
+      netplan apply
+
+      # 2) Warten, bis die Bastion NAT bereitstellt
+      until curl -fsS -m 5 -o /dev/null https://get.k3s.io; do sleep 5; done
+
+      # 3) k3s-Konfiguration
+      mkdir -p /etc/rancher/k3s
+      cat > /etc/rancher/k3s/config.yaml <<EOF
+      token: "${k3s_token}"
+      node-ip: "${node_ip}"
+      flannel-iface: "$IFACE"
+      node-label:
+        - "site=${site}"
+      # Ingress/ServiceLB werden nicht gebraucht: die Hetzner-LBs zeigen auf feste NodePorts
+      disable:
+        - servicelb
+        - traefik
+      write-kubeconfig-mode: "0600"
+      tls-san:
+        - "127.0.0.1"
+        - "${node_ip}"
+      %{~ if is_first }
+      cluster-init: true
+      %{~ else }
+      server: "https://${first_ip}:6443"
+      %{~ endif }
+      EOF
+
+      # 4) k3s installieren (Folge-Nodes warten automatisch auf Node 1)
+      until curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${k3s_version}" sh -s - server; do
+        sleep 10
+      done
+
+runcmd:
+  - /usr/local/sbin/setup-node.sh

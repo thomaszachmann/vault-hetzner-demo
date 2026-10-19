@@ -1,0 +1,57 @@
+# Fachanwendung im nbg1-Cluster: meldet sich per Kubernetes Auth (Service-Account-Token)
+# an Vault an. Der Vault Agent Injector rendert dynamische PostgreSQL-Zugänge nach
+# /vault/secrets/db.env und erneuert sie automatisch. Platzhalter ${...} ersetzt envsubst.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fachanwendung
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fachanwendung
+  namespace: fachanwendung
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fachanwendung
+  namespace: fachanwendung
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: fachanwendung }
+  template:
+    metadata:
+      labels: { app: fachanwendung }
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: fachanwendung
+        vault.hashicorp.com/namespace: "${VAULT_APP_NAMESPACE}"
+        vault.hashicorp.com/auth-path: "auth/${VAULT_K8S_MOUNT}"
+        vault.hashicorp.com/tls-secret: root-ca
+        vault.hashicorp.com/ca-cert: /vault/tls/ca.crt
+        vault.hashicorp.com/agent-inject-secret-db.env: "${VAULT_CREDS_PATH}"
+        vault.hashicorp.com/agent-inject-template-db.env: |
+          {{- with secret "${VAULT_CREDS_PATH}" -}}
+          PGUSER={{ .Data.username }}
+          PGPASSWORD={{ .Data.password }}
+          {{- end }}
+    spec:
+      serviceAccountName: fachanwendung
+      containers:
+        - name: app
+          image: postgres:17.11
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              while true; do
+                source /vault/secrets/db.env
+                echo "$(date +%T) DB-Benutzer von Vault: $PGUSER"
+                PGPASSWORD="$PGPASSWORD" psql -h ${SERVICES_IP} -U "$PGUSER" -d fachverfahren -Atc \
+                  "SELECT count(*) || ' Anträge lesbar' FROM antraege" || echo "Abfrage fehlgeschlagen"
+                sleep 30
+              done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }

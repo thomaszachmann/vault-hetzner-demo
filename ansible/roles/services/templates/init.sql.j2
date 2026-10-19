@@ -1,0 +1,29 @@
+-- {{ ansible_managed }}
+-- Läuft nur beim allerersten Start des PostgreSQL-Containers.
+
+-- Keycloak
+CREATE ROLE keycloak WITH LOGIN PASSWORD '{{ passwords.keycloak_db }}';
+CREATE DATABASE keycloak OWNER keycloak;
+
+-- Vault Database Secrets Engine: darf temporäre Rollen anlegen
+CREATE ROLE vault WITH LOGIN CREATEROLE PASSWORD '{{ passwords.postgres_vault }}';
+CREATE DATABASE fachverfahren OWNER vault;
+
+\connect fachverfahren
+
+CREATE TABLE antraege (
+  id          serial PRIMARY KEY,
+  aktenzeichen text NOT NULL,
+  antragsart  text NOT NULL,
+  status      text NOT NULL,
+  eingang     date NOT NULL
+);
+
+INSERT INTO antraege (aktenzeichen, antragsart, status, eingang) VALUES
+  ('AZ-2026-0001', 'Wohngeld',          'in Bearbeitung', '2026-09-01'),
+  ('AZ-2026-0002', 'Gewerbeanmeldung',  'bewilligt',      '2026-09-03'),
+  ('AZ-2026-0003', 'Baugenehmigung',    'Rückfrage',      '2026-09-12'),
+  ('AZ-2026-0004', 'Parkausweis',       'bewilligt',      '2026-09-20'),
+  ('AZ-2026-0005', 'Wohngeld',          'eingegangen',    '2026-10-02');
+
+ALTER TABLE antraege OWNER TO vault;

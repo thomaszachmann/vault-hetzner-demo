@@ -1,0 +1,17 @@
+# Geheimnisse und Laufzeitdaten (Root-CA, Init-Keys, Tokens, Lizenz, WireGuard)
+.secrets/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Generiert
+ansible/inventory.yml
+ansible/*.retry
+.ssh-control/
+
+# Persönliche Claude-Code-Einstellungen
+.claude/settings.local.json

@@ -1,0 +1,21 @@
+#cloud-config
+# Private Server ohne öffentliche IP: Default-Route über das Hetzner-Netzwerk-Gateway
+# (das per Network-Route an die Bastion weiterleitet) und Hetzner-DNS.
+runcmd:
+  - |
+    IFACE=$(ip -o -4 addr show | awk '$4 ~ /^10\.0\./ {print $2; exit}')
+    cat > /etc/netplan/60-default-via-bastion.yaml <<EOF
+    network:
+      version: 2
+      ethernets:
+        $IFACE:
+          dhcp4: true
+          routes:
+            - to: default
+              via: ${gateway_ip}
+              on-link: true
+          nameservers:
+            addresses: [185.12.64.1, 185.12.64.2]
+    EOF
+    chmod 600 /etc/netplan/60-default-via-bastion.yaml
+    netplan apply

@@ -1,0 +1,44 @@
+- name: Auf SSH warten
+  ansible.builtin.wait_for_connection:
+    timeout: 300
+
+- name: Auf Abschluss von cloud-init warten
+  ansible.builtin.command: cloud-init status --wait
+  changed_when: false
+  failed_when: false
+
+- name: Internetzugang prüfen (bei privaten Servern über NAT der Bastion)
+  ansible.builtin.uri:
+    url: https://releases.hashicorp.com/
+    method: HEAD
+  register: inet
+  retries: 20
+  delay: 6
+  until: inet is succeeded
+
+- name: Basis-Pakete
+  ansible.builtin.apt:
+    name: [curl, unzip, jq, ufw, ca-certificates, gnupg]
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Zeitzone
+  ansible.builtin.command: timedatectl set-timezone Europe/Berlin
+  changed_when: false
+
+# Rollen-spezifische Freigaben folgen in den Rollen; aktiviert wird am Ende jeder Rolle.
+- name: Host-Firewall – Grundregeln
+  ansible.builtin.shell: |
+    set -e
+    ufw --force reset >/dev/null
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw default {{ 'allow' if inventory_hostname == 'bastion' else 'deny' }} routed
+    {% if inventory_hostname == 'bastion' %}
+    ufw allow 22/tcp
+    ufw allow 51820/udp
+    {% else %}
+    ufw allow from {{ bastion_ip }} to any port 22 proto tcp
+    {% endif %}
+    ufw --force enable
+  changed_when: true

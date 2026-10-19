@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# Keine eigenen Scrape-Ziele: Alloy in den k3s-Clustern scrapt die Vault-Pods und
+# schreibt per Remote-Write hierher (Label site=fsn1|nbg1).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

@@ -1,0 +1,60 @@
+# "Unseal-Vault" je Standort: stellt die Transit-Engine für das Auto-Unseal des
+# Haupt-Clusters bereit und steht damit für das HSM des Rechenzentrums.
+# Platzhalter ${...} ersetzt scripts/platform.sh per envsubst.
+fullnameOverride: vault-unseal
+
+global:
+  tlsDisable: false
+
+injector:
+  enabled: false
+
+ui:
+  enabled: false
+
+server:
+  image:
+    repository: hashicorp/vault
+    tag: "${VAULT_VERSION}"
+
+  # Fest auf Node 3: der HA-Demo-Ausfall betrifft Node 1, das "HSM" bleibt erreichbar
+  nodeSelector:
+    kubernetes.io/hostname: k3s-${SITE}-3
+
+  extraEnvironmentVars:
+    VAULT_CACERT: /vault/userconfig/tls/ca.crt
+
+  volumes:
+    - name: tls
+      secret:
+        secretName: vault-unseal-tls
+  volumeMounts:
+    - name: tls
+      mountPath: /vault/userconfig/tls
+      readOnly: true
+
+  dataStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: local-path
+
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }
+
+  standalone:
+    enabled: true
+    config: |
+      ui = false
+      disable_mlock = true
+
+      listener "tcp" {
+        address         = "[::]:8200"
+        cluster_address = "[::]:8201"
+        tls_cert_file   = "/vault/userconfig/tls/tls.crt"
+        tls_key_file    = "/vault/userconfig/tls/tls.key"
+      }
+
+      storage "file" {
+        path = "/vault/data"
+      }

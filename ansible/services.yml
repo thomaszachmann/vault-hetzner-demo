@@ -1,0 +1,20 @@
+# Externe Dienste: Keycloak (IdM), PostgreSQL, Prometheus, Grafana, Loki (Docker Compose)
+- name: Passwörter lokal erzeugen (einmalig)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Alle Passwortdateien anlegen
+      ansible.builtin.debug:
+        msg: "{{ passwords | dict2items | map(attribute='key') | list }}"
+
+- name: Dienste-VM
+  hosts: services
+  gather_facts: false
+  pre_tasks:
+    - name: Auf SSH warten (über die Bastion)
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+    - name: Fakten sammeln
+      ansible.builtin.setup:
+  roles: [common, services]
