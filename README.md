@@ -1,15 +1,15 @@
-# Vault Enterprise Demo auf Hetzner Cloud (k3s)
+# Vault Enterprise Demo on Hetzner Cloud (k3s)
 
-Geo-redundante Vault-Plattform: je Rechenzentrum ein k3s-Cluster mit Vault (Helm, Raft, 3 Pods),
-DR-Replication fsn1 → nbg1, Transit-Auto-Unseal, Namespaces, Keycloak-OIDC mit MFA,
-Kubernetes Auth mit Vault Agent Injector, zentrales Monitoring – wird nur für die Vorführung aufgebaut.
+Geo-redundant Vault platform: one k3s cluster per data center with Vault (Helm, Raft, 3 pods),
+DR replication fsn1 → nbg1, Transit auto-unseal, namespaces, Keycloak OIDC with MFA,
+Kubernetes auth with Vault Agent Injector, central monitoring – built only for the demo.
 
 ```bash
-mise install          # Tools
-mise run setup        # Voraussetzungen prüfen, Root-CA anlegen
-mise run deploy       # ~20 min, ~0,34 €/h
-mise run urls         # GUIs (nip.io, über WireGuard)
-mise run destroy      # alles löschen
+mise install          # tools
+mise run setup        # check prerequisites, create root CA
+mise run deploy       # ~20 min, ~€0.34/h
+mise run urls         # GUIs (nip.io, via WireGuard)
+mise run destroy      # delete everything
 ```
 
-Vollständige Dokumentation inkl. Drehbuch: [docs/vault-demo.md](docs/vault-demo.md) ([PDF](docs/vault-demo.pdf))
+Full documentation including the demo script: [docs/vault-demo.md](docs/vault-demo.md) ([PDF](docs/vault-demo.pdf))
